@@ -1,144 +1,130 @@
-export function template(string, data = {}) {
-  return render(String(string), data);
+export function template(templateStr, data = {}) {
+  return render(String(templateStr), data);
 }
 
-function render(input, context) {
-  const src = String(input);
-  let out = "";
-  let i = 0;
+function render(source, context) {
+  let output = "";
+  let index = 0;
 
-  while (i < src.length) {
-    const open = src.indexOf("{{", i);
-    if (open < 0) return out + src.slice(i);
-    out += src.slice(i, open);
+  while (index < source.length) {
+    const open = source.indexOf("{{", index);
+    if (open < 0) return output + source.slice(index);
+    output += source.slice(index, open);
 
-    const close = src.indexOf("}}", open + 2);
-    if (close < 0) return out + src.slice(open);
+    const close = source.indexOf("}}", open + 2);
+    if (close < 0) return output + source.slice(open);
 
-    const tag = src.slice(open + 2, close).trim();
+    const tag = source.slice(open + 2, close).trim();
 
-    // Branch on the kinds of tokens we recognize: each, if, literals, or variables.
-    if (tag.startsWith("#each ")) {
-      const expr = tag.slice(6).trim();
-      const { body, nextIndex } = extractBlock(src, close + 2, "each");
-      out += renderEach(expr, body, context);
-      i = nextIndex;
-      continue;
+    if (tag.startsWith("#each ") || tag.startsWith("#if ")) {
+      const blockKind = tag.startsWith("#each ") ? "each" : "if";
+      const expression = tag.slice(blockKind.length + 2).trim();
+      const { body: blockBody, end } = extractBlock(
+        source,
+        close + 2,
+        blockKind,
+      );
+      output +=
+        blockKind === "each"
+          ? renderEach(expression, blockBody, context)
+          : renderIf(expression, blockBody, context);
+      index = end;
+    } else if (tag === "else" || tag[0] === "/") {
+      output += source.slice(open, close + 2);
+      index = close + 2;
+    } else {
+      const value = resolveValue(context, tag);
+      output += value == null ? "" : value;
+      index = close + 2;
     }
-
-    if (tag.startsWith("#if ")) {
-      const expr = tag.slice(4).trim();
-      const { body, nextIndex } = extractBlock(src, close + 2, "if");
-      out += renderIf(expr, body, context);
-      i = nextIndex;
-      continue;
-    }
-
-    if (tag === "else" || tag[0] === "/") {
-      out += src.slice(open, close + 2);
-      i = close + 2;
-      continue;
-    }
-
-    // Variable interpolation.
-    const value = resolvePath(context, tag);
-    out += value == null ? "" : String(value);
-    i = close + 2;
   }
 
-  return out;
+  return output;
 }
 
-function renderEach(expr, body, context) {
-  const list = resolvePath(context, expr);
-  if (!Array.isArray(list) || list.length === 0) return "";
+function renderEach(expression, body, context) {
+  const items = resolveValue(context, expression);
+  if (!Array.isArray(items)) return "";
 
-  return list
-    .map((item, index) => {
-      const childContext = makeChildContext(context, item, index);
+  return items
+    .map((item, itemIndex) => {
+      const childContext =
+        typeof context === "object" && context ? { ...context } : {};
+      if (typeof item === "object" && item) Object.assign(childContext, item);
+      childContext.this = item;
+      childContext["@index"] = itemIndex;
       return render(body, childContext);
     })
     .join("");
 }
 
-function renderIf(expr, body, context) {
-  const [truthyPart, falsyPart = ""] = splitElseTopLevel(body);
-  const cond = resolvePath(context, expr);
-  return cond ? render(truthyPart, context) : render(falsyPart, context);
+function renderIf(expression, body, context) {
+  const [truthyPart, falsyPart = ""] = splitElseSegment(body);
+  const guard = resolveValue(context, expression);
+  return render(guard ? truthyPart : falsyPart, context);
 }
 
-function splitElseTopLevel(body) {
-  const src = String(body);
+function splitElseSegment(source) {
   let depth = 0;
-  let i = 0;
+  let position = 0;
 
-  while (i < src.length) {
-    const open = src.indexOf("{{", i);
+  while (position < source.length) {
+    const open = source.indexOf("{{", position);
     if (open < 0) break;
-    const close = src.indexOf("}}", open + 2);
+    const close = source.indexOf("}}", open + 2);
     if (close < 0) break;
-    const tag = src.slice(open + 2, close).trim();
+    const tag = source.slice(open + 2, close).trim();
 
     if (tag.startsWith("#each ") || tag.startsWith("#if ")) {
-      // Increase depth for nested blocks so we find the matching closing tag.
-      // Track nested block depth so {{else}} split only happens at the outermost level.
       depth++;
     } else if (tag === "/each" || tag === "/if") {
       depth = Math.max(0, depth - 1);
     } else if (tag === "else" && depth === 0) {
-      return [src.slice(0, open), src.slice(close + 2)];
+      return [source.slice(0, open), source.slice(close + 2)];
     }
 
-    i = close + 2;
+    position = close + 2;
   }
 
-  return [src];
+  return [source];
 }
 
-function extractBlock(src, fromIndex, kind) {
-  const end = "/" + kind;
+function extractBlock(source, fromIndex, kind) {
   let depth = 1;
-  let i = fromIndex;
+  let position = fromIndex;
 
-  while (i < src.length) {
-    const open = src.indexOf("{{", i);
+  while (position < source.length) {
+    const open = source.indexOf("{{", position);
     if (open < 0) break;
-    const close = src.indexOf("}}", open + 2);
+    const close = source.indexOf("}}", open + 2);
     if (close < 0) break;
-    const tag = src.slice(open + 2, close).trim();
+    const tag = source.slice(open + 2, close).trim();
 
-    if (tag.startsWith("#each ") || tag.startsWith("#if ")) depth++;
-    else if (tag === end) {
-      if (--depth === 0)
-        return { body: src.slice(fromIndex, open), nextIndex: close + 2 };
+    if (tag.startsWith("#each ") || tag.startsWith("#if ")) {
+      depth++;
+    } else if (tag === "/" + kind) {
+      if (--depth === 0) {
+        return { body: source.slice(fromIndex, open), end: close + 2 };
+      }
     } else if (tag === "/each" || tag === "/if") {
       depth = Math.max(0, depth - 1);
     }
 
-    i = close + 2;
+    position = close + 2;
   }
 
-  // Missing close tag: treat remainder as body.
-  return { body: src.slice(fromIndex), nextIndex: src.length };
+  return { body: source.slice(fromIndex), end: source.length };
 }
 
-function resolvePath(context, expr) {
-  if (!expr) return;
-  if (expr === "this" || expr === "@index") return context?.[expr];
+function resolveValue(context, path) {
+  if (!path) return;
+  if (path === "this" || path === "@index") return context?.[path];
 
-  let cur = context;
-  for (const part of String(expr).split(".")) {
-    if (!part) continue;
-    if (cur == null) return;
-    cur = cur[part];
+  let current = context;
+  for (const segment of path.split(".")) {
+    if (current == null) return;
+    current = current[segment];
   }
-  return cur;
-}
 
-function makeChildContext(parent, item, index) {
-  const base = parent && typeof parent === "object" ? parent : {};
-  if (item && typeof item === "object") {
-    return { ...base, ...item, this: item, "@index": index };
-  }
-  return { ...base, this: item, "@index": index };
+  return current;
 }
