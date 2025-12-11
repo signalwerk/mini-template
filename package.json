@@ -1,0 +1,20 @@
+{
+  "name": "mini-template",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Tiny Handlebars-inspired template function",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
+  }
+}

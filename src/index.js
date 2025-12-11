@@ -1,22 +1,3 @@
-/*
- * minit.js – tiny Handlebars-inspired template engine.
- *
- * README
- *   template(string, data)
- *     Renders the provided template with the given context object. Supports:
- *       - {{path}} variable interpolation, including nested
- *       - {{#each list}}{{/each}} loops with access to {{this}} and {{@index}}
- *       - {{#if flag}}true{{else}}false{{/if}} conditionals (only a single else branch)
- *     Behaves like a reduced Handlebars subset (same block markers, a single {{else}} per if,
- *     literal evaluation, and simple dot-path lookups) so it can replace simple Handlebars
- *     usage across the docs site without pulling in the full runtime.
- *
- * Usage example:
- *   import { template } from "./minit.js";
- *   const tpl = "{{#each palettes}}{{name}} {{#if isSpacer}}(spacer){{else}}(color){{/if}}\n";
- *   console.log(template(tpl, { palettes: [{ name: "A" }] }));
- */
-
 export function template(string, data = {}) {
   return render(String(string), data);
 }
@@ -28,23 +9,17 @@ function render(input, context) {
 
   while (i < src.length) {
     const open = src.indexOf("{{", i);
-    if (open === -1) {
-      out += src.slice(i);
-      break;
-    }
-
+    if (open < 0) return out + src.slice(i);
     out += src.slice(i, open);
+
     const close = src.indexOf("}}", open + 2);
-    if (close === -1) {
-      out += src.slice(open);
-      break;
-    }
+    if (close < 0) return out + src.slice(open);
 
     const tag = src.slice(open + 2, close).trim();
 
     // Branch on the kinds of tokens we recognize: each, if, literals, or variables.
     if (tag.startsWith("#each ")) {
-      const expr = tag.slice("#each ".length).trim();
+      const expr = tag.slice(6).trim();
       const { body, nextIndex } = extractBlock(src, close + 2, "each");
       out += renderEach(expr, body, context);
       i = nextIndex;
@@ -52,15 +27,14 @@ function render(input, context) {
     }
 
     if (tag.startsWith("#if ")) {
-      const expr = tag.slice("#if ".length).trim();
+      const expr = tag.slice(4).trim();
       const { body, nextIndex } = extractBlock(src, close + 2, "if");
       out += renderIf(expr, body, context);
       i = nextIndex;
       continue;
     }
 
-    if (tag === "else" || tag === "/each" || tag === "/if") {
-      // Unbalanced/misplaced tag; treat literally.
+    if (tag === "else" || tag[0] === "/") {
       out += src.slice(open, close + 2);
       i = close + 2;
       continue;
@@ -68,7 +42,7 @@ function render(input, context) {
 
     // Variable interpolation.
     const value = resolvePath(context, tag);
-    out += value === undefined || value === null ? "" : String(value);
+    out += value == null ? "" : String(value);
     i = close + 2;
   }
 
@@ -100,9 +74,9 @@ function splitElseTopLevel(body) {
 
   while (i < src.length) {
     const open = src.indexOf("{{", i);
-    if (open === -1) break;
+    if (open < 0) break;
     const close = src.indexOf("}}", open + 2);
-    if (close === -1) break;
+    if (close < 0) break;
     const tag = src.slice(open + 2, close).trim();
 
     if (tag.startsWith("#each ") || tag.startsWith("#if ")) {
@@ -122,35 +96,23 @@ function splitElseTopLevel(body) {
 }
 
 function extractBlock(src, fromIndex, kind) {
+  const end = "/" + kind;
   let depth = 1;
   let i = fromIndex;
 
   while (i < src.length) {
     const open = src.indexOf("{{", i);
-    if (open === -1) break;
+    if (open < 0) break;
     const close = src.indexOf("}}", open + 2);
-    if (close === -1) break;
+    if (close < 0) break;
     const tag = src.slice(open + 2, close).trim();
 
-    if (tag.startsWith("#each ") || tag.startsWith("#if ")) {
-      depth++;
-      i = close + 2;
-      continue;
-    }
-
-    if (tag === "/" + kind) {
-      depth--;
-      if (depth === 0) {
+    if (tag.startsWith("#each ") || tag.startsWith("#if ")) depth++;
+    else if (tag === end) {
+      if (--depth === 0)
         return { body: src.slice(fromIndex, open), nextIndex: close + 2 };
-      }
-      i = close + 2;
-      continue;
-    }
-
-    if (tag === "/each" || tag === "/if") {
+    } else if (tag === "/each" || tag === "/if") {
       depth = Math.max(0, depth - 1);
-      i = close + 2;
-      continue;
     }
 
     i = close + 2;
@@ -161,14 +123,13 @@ function extractBlock(src, fromIndex, kind) {
 }
 
 function resolvePath(context, expr) {
-  if (!expr) return undefined;
-  if (expr === "this") return context?.this;
-  if (expr === "@index") return context?.["@index"];
+  if (!expr) return;
+  if (expr === "this" || expr === "@index") return context?.[expr];
 
-  const parts = String(expr).split(".").filter(Boolean);
   let cur = context;
-  for (const part of parts) {
-    if (cur == null) return undefined;
+  for (const part of String(expr).split(".")) {
+    if (!part) continue;
+    if (cur == null) return;
     cur = cur[part];
   }
   return cur;
