@@ -83,4 +83,20 @@ describe("template", () => {
       "{{#if ok}}Y{{/if}}",
     );
   });
+
+  test("interpolations are HTML-escaped by default (Handlebars-style)", () => {
+    expect(template("{{v}}", { v: "&<>\"'`=" })).toBe(
+      "&amp;&lt;&gt;&quot;&#x27;&#x60;&#x3D;",
+    );
+  });
+
+  test("triple-stash renders unescaped HTML", () => {
+    expect(template("{{{html}}}", { html: "<b>Hi</b>" })).toBe("<b>Hi</b>");
+  });
+
+  test("escaped triple-stash expressions are output literally", () => {
+    expect(template("x\\{{{html}}}y", { html: "<b>Hi</b>" })).toBe(
+      "x{{{html}}}y",
+    );
+  });
 });

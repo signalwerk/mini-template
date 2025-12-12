@@ -22,13 +22,13 @@ function render(source, context) {
     // Check for escape: a preceding backslash means we output literal tag
     if (nextTag.open > 0 && source[nextTag.open - 1] === "\\") {
       output += source.slice(index, nextTag.open - 1);
-      output += "{{" + nextTag.tag + "}}";
-      index = nextTag.close + 2;
+      output += source.slice(nextTag.open, nextTag.close + nextTag.closeLen);
+      index = nextTag.close + nextTag.closeLen;
       continue;
     }
 
     output += source.slice(index, nextTag.open);
-    index = nextTag.close + 2;
+    index = nextTag.close + nextTag.closeLen;
 
     const block = parseBlockTag(nextTag.tag);
     if (block) {
@@ -46,7 +46,7 @@ function render(source, context) {
       continue;
     }
 
-    output += renderSimple(nextTag.tag, context);
+    output += renderSimple(nextTag, context);
   }
 
   return output;
@@ -83,10 +83,13 @@ function splitElseSegment(source) {
     } else if (isClosingBlock(tagInfo.tag)) {
       depth = Math.max(0, depth - 1);
     } else if (tagInfo.tag === "else" && depth === 0) {
-      return [source.slice(0, tagInfo.open), source.slice(tagInfo.close + 2)];
+      return [
+        source.slice(0, tagInfo.open),
+        source.slice(tagInfo.close + tagInfo.closeLen),
+      ];
     }
 
-    position = tagInfo.close + 2;
+    position = tagInfo.close + tagInfo.closeLen;
   }
 
   return [source];
@@ -108,14 +111,14 @@ function extractBlock(source, fromIndex, kind) {
       if (depth === 0) {
         return {
           body: source.slice(fromIndex, tagInfo.open),
-          end: tagInfo.close + 2,
+          end: tagInfo.close + tagInfo.closeLen,
         };
       }
     } else if (isClosingBlock(tagInfo.tag)) {
       depth = Math.max(0, depth - 1);
     }
 
-    position = tagInfo.close + 2;
+    position = tagInfo.close + tagInfo.closeLen;
   }
 
   return { body: source.slice(fromIndex), end: source.length };
@@ -137,9 +140,22 @@ function resolveValue(context, path) {
 function findNextTag(source, fromIndex) {
   const open = source.indexOf("{{", fromIndex);
   if (open < 0) return null;
-  const close = source.indexOf("}}", open + 2);
+
+  const isTriple = source.startsWith("{{{", open);
+  const openLen = isTriple ? 3 : 2;
+  const closeToken = isTriple ? "}}}" : "}}";
+  const closeLen = isTriple ? 3 : 2;
+
+  const close = source.indexOf(closeToken, open + openLen);
   if (close < 0) return null;
-  return { open, close, tag: source.slice(open + 2, close).trim() };
+
+  return {
+    open,
+    close,
+    closeLen,
+    isTriple,
+    tag: source.slice(open + openLen, close).trim(),
+  };
 }
 
 function parseBlockTag(tag) {
@@ -152,9 +168,44 @@ function parseBlockTag(tag) {
   return null;
 }
 
-function renderSimple(tag, context) {
-  const value = resolveValue(context, tag);
-  return value == null ? "" : value;
+function renderSimple(tagInfo, context) {
+  const { expression, isUnescaped } = parseExpression(
+    tagInfo.tag,
+    tagInfo.isTriple,
+  );
+  const value = resolveValue(context, expression);
+  if (value == null) return "";
+  const stringValue = String(value);
+  return isUnescaped ? stringValue : escapeHtml(stringValue);
+}
+
+function parseExpression(tag, isTriple) {
+  if (isTriple) return { expression: tag, isUnescaped: true };
+  return { expression: tag, isUnescaped: false };
+}
+
+function escapeHtml(value) {
+  // Mirrors Handlebars-style HTML escaping.
+  return value.replace(/[&<>"'`=]/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#x27;";
+      case "`":
+        return "&#x60;";
+      case "=":
+        return "&#x3D;";
+      default:
+        return char;
+    }
+  });
 }
 
 // Merge the parent scope with the current item, tracking handy helpers.

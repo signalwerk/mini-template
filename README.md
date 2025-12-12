@@ -13,7 +13,8 @@ console.log(template(tpl, { name: "World" }));
 
 Supported subset:
 
-- `{{path}}` interpolation (dot paths)
+- `{{path}}` interpolation (dot paths, HTML-escaped like Handlebars)
+- `{{{path}}}` unescaped interpolation
 - `\{{path}}` escape (outputs `{{path}}` literally, also works for block tags)
 - `{{#each list}}...{{/each}}` with `{{this}}` and `{{@index}}`
 - `{{#if flag}}...{{else}}...{{/if}}`
