@@ -7,36 +7,32 @@ function render(source, context) {
   let index = 0;
 
   while (index < source.length) {
-    const open = source.indexOf("{{", index);
-    if (open < 0) return output + source.slice(index);
-    output += source.slice(index, open);
-
-    const close = source.indexOf("}}", open + 2);
-    if (close < 0) return output + source.slice(open);
-
-    const tag = source.slice(open + 2, close).trim();
-
-    if (tag.startsWith("#each ") || tag.startsWith("#if ")) {
-      const blockKind = tag.startsWith("#each ") ? "each" : "if";
-      const expression = tag.slice(blockKind.length + 2).trim();
-      const { body: blockBody, end } = extractBlock(
-        source,
-        close + 2,
-        blockKind,
-      );
-      output +=
-        blockKind === "each"
-          ? renderEach(expression, blockBody, context)
-          : renderIf(expression, blockBody, context);
-      index = end;
-    } else if (tag === "else" || tag[0] === "/") {
-      output += source.slice(open, close + 2);
-      index = close + 2;
-    } else {
-      const value = resolveValue(context, tag);
-      output += value == null ? "" : value;
-      index = close + 2;
+    const nextTag = findNextTag(source, index);
+    if (!nextTag) {
+      output += source.slice(index);
+      break;
     }
+
+    output += source.slice(index, nextTag.open);
+    index = nextTag.close + 2;
+
+    const block = parseBlockTag(nextTag.tag);
+    if (block) {
+      const { body, end } = extractBlock(source, index, block.kind);
+      output +=
+        block.kind === "each"
+          ? renderEach(block.expression, body, context)
+          : renderIf(block.expression, body, context);
+      index = end;
+      continue;
+    }
+
+    if (isSkippableTag(nextTag.tag)) {
+      output += source.slice(nextTag.open, index);
+      continue;
+    }
+
+    output += renderSimple(nextTag.tag, context);
   }
 
   return output;
@@ -47,14 +43,9 @@ function renderEach(expression, body, context) {
   if (!Array.isArray(items)) return "";
 
   return items
-    .map((item, itemIndex) => {
-      const childContext =
-        typeof context === "object" && context ? { ...context } : {};
-      if (typeof item === "object" && item) Object.assign(childContext, item);
-      childContext.this = item;
-      childContext["@index"] = itemIndex;
-      return render(body, childContext);
-    })
+    .map((item, itemIndex) =>
+      render(body, createChildContext(context, item, itemIndex)),
+    )
     .join("");
 }
 
@@ -64,53 +55,53 @@ function renderIf(expression, body, context) {
   return render(guard ? truthyPart : falsyPart, context);
 }
 
+// Split the block into the content before/after a top-level {{else}}.
 function splitElseSegment(source) {
   let depth = 0;
   let position = 0;
 
   while (position < source.length) {
-    const open = source.indexOf("{{", position);
-    if (open < 0) break;
-    const close = source.indexOf("}}", open + 2);
-    if (close < 0) break;
-    const tag = source.slice(open + 2, close).trim();
+    const tagInfo = findNextTag(source, position);
+    if (!tagInfo) break;
 
-    if (tag.startsWith("#each ") || tag.startsWith("#if ")) {
+    if (isOpeningBlock(tagInfo.tag)) {
       depth++;
-    } else if (tag === "/each" || tag === "/if") {
+    } else if (isClosingBlock(tagInfo.tag)) {
       depth = Math.max(0, depth - 1);
-    } else if (tag === "else" && depth === 0) {
-      return [source.slice(0, open), source.slice(close + 2)];
+    } else if (tagInfo.tag === "else" && depth === 0) {
+      return [source.slice(0, tagInfo.open), source.slice(tagInfo.close + 2)];
     }
 
-    position = close + 2;
+    position = tagInfo.close + 2;
   }
 
   return [source];
 }
 
+// Capture the block body between the opening tag and its matching closing tag.
 function extractBlock(source, fromIndex, kind) {
   let depth = 1;
   let position = fromIndex;
 
   while (position < source.length) {
-    const open = source.indexOf("{{", position);
-    if (open < 0) break;
-    const close = source.indexOf("}}", open + 2);
-    if (close < 0) break;
-    const tag = source.slice(open + 2, close).trim();
+    const tagInfo = findNextTag(source, position);
+    if (!tagInfo) break;
 
-    if (tag.startsWith("#each ") || tag.startsWith("#if ")) {
+    if (isOpeningBlock(tagInfo.tag)) {
       depth++;
-    } else if (tag === "/" + kind) {
-      if (--depth === 0) {
-        return { body: source.slice(fromIndex, open), end: close + 2 };
+    } else if (tagInfo.tag === `/${kind}`) {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) {
+        return {
+          body: source.slice(fromIndex, tagInfo.open),
+          end: tagInfo.close + 2,
+        };
       }
-    } else if (tag === "/each" || tag === "/if") {
+    } else if (isClosingBlock(tagInfo.tag)) {
       depth = Math.max(0, depth - 1);
     }
 
-    position = close + 2;
+    position = tagInfo.close + 2;
   }
 
   return { body: source.slice(fromIndex), end: source.length };
@@ -127,4 +118,54 @@ function resolveValue(context, path) {
   }
 
   return current;
+}
+
+function findNextTag(source, fromIndex) {
+  const open = source.indexOf("{{", fromIndex);
+  if (open < 0) return null;
+  const close = source.indexOf("}}", open + 2);
+  if (close < 0) return null;
+  return { open, close, tag: source.slice(open + 2, close).trim() };
+}
+
+function parseBlockTag(tag) {
+  if (tag.startsWith("#each ")) {
+    return { kind: "each", expression: tag.slice(6).trim() };
+  }
+  if (tag.startsWith("#if ")) {
+    return { kind: "if", expression: tag.slice(4).trim() };
+  }
+  return null;
+}
+
+function renderSimple(tag, context) {
+  const value = resolveValue(context, tag);
+  return value == null ? "" : value;
+}
+
+// Merge the parent scope with the current item, tracking handy helpers.
+function createChildContext(parentContext, item, itemIndex) {
+  const baseContext =
+    typeof parentContext === "object" && parentContext
+      ? { ...parentContext }
+      : {};
+  const itemContext = item && typeof item === "object" ? item : {};
+  return {
+    ...baseContext,
+    ...itemContext,
+    this: item,
+    ["@index"]: itemIndex,
+  };
+}
+
+function isSkippableTag(tag) {
+  return tag === "else" || tag.startsWith("/");
+}
+
+function isOpeningBlock(tag) {
+  return tag.startsWith("#each ") || tag.startsWith("#if ");
+}
+
+function isClosingBlock(tag) {
+  return tag === "/each" || tag === "/if";
 }
