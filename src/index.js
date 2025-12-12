@@ -13,6 +13,14 @@ function render(source, context) {
       break;
     }
 
+    // Check for escape: a preceding backslash means we output literal tag
+    if (nextTag.open > 0 && source[nextTag.open - 1] === "\\") {
+      output += source.slice(index, nextTag.open - 1);
+      output += "{{" + nextTag.tag + "}}";
+      index = nextTag.close + 2;
+      continue;
+    }
+
     output += source.slice(index, nextTag.open);
     index = nextTag.close + 2;
 

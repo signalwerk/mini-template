@@ -22,9 +22,9 @@ describe("template", () => {
 
   test("each merges object items into context", () => {
     const tpl = "{{#each items}}{{name}}-{{root}};{{/each}}";
-    expect(template(tpl, { root: "R", items: [{ name: "A" }, { name: "B" }] })).toBe(
-      "A-R;B-R;"
-    );
+    expect(
+      template(tpl, { root: "R", items: [{ name: "A" }, { name: "B" }] }),
+    ).toBe("A-R;B-R;");
   });
 
   test("if / else", () => {
@@ -48,7 +48,9 @@ describe("template", () => {
   });
 
   test("each ignores non-array values", () => {
-    expect(template("{{#each missing}}X{{/each}}", { missing: "nope" })).toBe("");
+    expect(template("{{#each missing}}X{{/each}}", { missing: "nope" })).toBe(
+      "",
+    );
   });
 
   test("if without else only renders when truthy", () => {
@@ -62,10 +64,23 @@ describe("template", () => {
   });
 
   test("each keeps parent context while exposing child fields", () => {
-    const tpl = "{{shared}}:{{#each items}}{{value}}-{{shared}}@{{@index}};{{/each}}";
+    const tpl =
+      "{{shared}}:{{#each items}}{{value}}-{{shared}}@{{@index}};{{/each}}";
     const items = [{ value: "a" }, { value: "b" }];
     expect(template(tpl, { shared: "root", items })).toBe(
-      "root:a-root@0;b-root@1;"
+      "root:a-root@0;b-root@1;",
+    );
+  });
+
+  test("escaped expressions are output literally", () => {
+    expect(template("Hello \\{{name}}", { name: "World" })).toBe(
+      "Hello {{name}}",
+    );
+  });
+
+  test("escaped block tags are output literally", () => {
+    expect(template("\\{{#if ok}}Y{{/if}}", { ok: true })).toBe(
+      "{{#if ok}}Y{{/if}}",
     );
   });
 });
