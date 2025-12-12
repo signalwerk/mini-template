@@ -46,4 +46,26 @@ describe("template", () => {
   test("unclosed mustache is treated literally", () => {
     expect(template("x{{oops", {})).toBe("x{{oops");
   });
+
+  test("each ignores non-array values", () => {
+    expect(template("{{#each missing}}X{{/each}}", { missing: "nope" })).toBe("");
+  });
+
+  test("if without else only renders when truthy", () => {
+    const tpl = "{{#if ok}}yes{{/if}}";
+    expect(template(tpl, { ok: true })).toBe("yes");
+    expect(template(tpl, { ok: false })).toBe("");
+  });
+
+  test("zero values render as text", () => {
+    expect(template("count:{{zero}}", { zero: 0 })).toBe("count:0");
+  });
+
+  test("each keeps parent context while exposing child fields", () => {
+    const tpl = "{{shared}}:{{#each items}}{{value}}-{{shared}}@{{@index}};{{/each}}";
+    const items = [{ value: "a" }, { value: "b" }];
+    expect(template(tpl, { shared: "root", items })).toBe(
+      "root:a-root@0;b-root@1;"
+    );
+  });
 });
