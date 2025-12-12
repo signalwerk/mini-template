@@ -1,3 +1,9 @@
+/**
+ * mini-template — tiny Handlebars-inspired template function.
+ * Grab a copy for your project:
+ * curl https://raw.githubusercontent.com/signalwerk/mini-template/refs/heads/main/src/index.js -o src/mini-template.js
+ */
+
 export function template(templateStr, data = {}) {
   return render(String(templateStr), data);
 }
